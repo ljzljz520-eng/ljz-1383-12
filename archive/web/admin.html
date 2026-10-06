@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>成长站档案 · 管理端</title>
+<style>
+:root{--ink:#3a342a;--muted:#8c8577;--accent:#a9843b;--line:#e6e0d2;--bg:#faf7f0;
+ --warn:#b3541e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font-family:-apple-system,"PingFang SC",sans-serif;line-height:1.6}
+header{background:#fff;border-bottom:1px solid var(--line);padding:14px 20px}
+header .wrap{max-width:1080px;margin:0 auto;display:flex;gap:10px;align-items:center;
+ flex-wrap:wrap}
+h1{font-size:18px;margin:0;flex:1}
+.wrap{max-width:1080px;margin:0 auto;padding:18px 20px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.tabs button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 14px;
+ cursor:pointer}
+.tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+label{display:block;font-size:12px;color:var(--muted);margin:8px 0 2px}
+input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;
+ font-size:14px;font-family:inherit}
+textarea{min-height:70px}
+button.act{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 16px;
+ cursor:pointer;margin-top:10px}
+button.ghost{background:#fff;border:1px solid var(--line);border-radius:6px;padding:6px 12px;
+ cursor:pointer;margin:2px}
+button.danger{border-color:#d49a9a;color:#a33;background:#fff}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{border-bottom:1px solid var(--line);padding:7px;text-align:left;vertical-align:top}
+.tag{display:inline-block;font-size:11px;border-radius:4px;padding:1px 7px;margin-right:4px}
+.v-private{background:#eee;color:#666}.v-pending{background:#fce8c7;color:var(--warn)}
+.v-published{background:#e2efd9;color:#3d6b1e}.v-archived{background:#e8e3f0;color:#675}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.row3{display:grid;
+ grid-template-columns:1fr 1fr 1fr;gap:10px}
+.muted{color:var(--muted);font-size:12px}
+.warn{color:var(--warn);font-size:12px}
+.raw{font-family:monospace;background:#f6f3ea;padding:8px;border-radius:6px;font-size:12px;
+ white-space:pre-wrap;word-break:break-all}
+.badge-n{background:var(--warn);color:#fff;border-radius:999px;padding:0 7px;font-size:11px}
+pre.dump{background:#f6f3ea;padding:10px;border-radius:8px;overflow:auto;font-size:12px;
+ max-height:300px}
+</style></head>
+<body>
+<header><div class="wrap">
+  <h1>书影音档案 · 管理端</h1>
+  <input id="token" placeholder="管理员令牌" style="width:200px" value="">
+  <button class="ghost" onclick="login()">登录</button>
+  <a class="ghost" href="/" style="text-decoration:none;font-size:13px">← 访客页</a>
+</div></header>
+<div class="wrap">
+  <div class="tabs">
+    <button data-t="entry" class="on">录入</button>
+    <button data-t="notes">笔记</button>
+    <button data-t="import">离线导入</button>
+    <button data-t="conflicts">冲突审阅 <span id="cfc"></span></button>
+    <button data-t="merge">合并 / 拆分</button>
+    <button data-t="topics">主题</button>
+    <button data-t="sources">来源</button>
+    <button data-t="browse">数据浏览</button>
+  </div>
+  <div id="view"></div>
+</div>
+<script>
+let TOKEN = localStorage.getItem('admin_token')||'';
+$=id=>document.getElementById(id);
+function esc(s){return (s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function api(path, opts={}){
+  const r = await fetch(path, Object.assign({headers:{'X-Admin-Token':TOKEN,
+     'Content-Type':'application/json'}}, opts));
+  const d = await r.json().catch(()=>({}));
+  if(r.status===401){alert('请先登录（令牌不对）');throw new Error('unauth');}
+  if(d.error) alert(d.error+' ['+(d.code||'')+']');
+  return d;
+}
+async function login(){
+  TOKEN=$('token').value.trim();
+  const r=await fetch('/api/admin/session',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN})});
+  if(r.ok){localStorage.setItem('admin_token',TOKEN);alert('登录成功');loadTab('entry');refreshCount();}
+  else alert('令牌错误');
+}
+$('token').value = TOKEN;
+
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>loadTab(b.dataset.t));
+const TABS={entry:tabEntry,notes:tabNotes,import:tabImport,conflicts:tabConflicts,
+ merge:tabMerge,topics:tabTopics,sources:tabSources,browse:tabBrowse};
+function loadTab(t){document.querySelectorAll('.tabs button').forEach(b=>
+ b.classList.toggle('on',b.dataset.t===t));TABS[t]();}
+
+/* ---------------- 录入 ---------------- */
+async function tabEntry(){
+  $('view').innerHTML=`
+  <div class="panel">
+    <h3>① 先检查：这条与已有条目是不是同一作品？</h3>
+    <p class="muted">规则：外部标识（ISBN/IMDB/馆内 ID…）优先 + 人工证据；仅凭标题相同<b>不会</b>自动合并，只会产生待审冲突。
+       不同译本/不同录音即使标题相同也应保留为独立版本。</p>
+    <div class="row3">
+      <div><label>类型</label><select id="m-k"><option value="book">书</option>
+        <option value="film">影</option><option value="music">音</option></select></div>
+      <div><label>标题</label><input id="m-title"></div>
+      <div><label>作者/导演/艺术家</label><input id="m-creator"></div>
+    </div>
+    <div class="row2">
+      <div><label>外部标识（命名空间:值，分号分隔）</label>
+        <input id="m-ids" placeholder="isbn:978-7-5327-7753-2; imdb:tt0087803"></div>
+      <div><label>人工证据链接（仅作审阅线索）</label><input id="m-ev"></div>
+    </div>
+    <button class="ghost" onclick="matchCheck()">检查匹配 / 冲突</button>
+    <span id="m-result" class="muted"></span>
+  </div>
+  <div class="panel"><h3>② 作品与版本</h3>
+    <div class="row3">
+      <div><label>原作年份</label><input id="m-oy" type="number"></div>
+      <div><label>此版本名（译者/录音/发行）</label><input id="m-vlabel"
+        placeholder="如：刘绍铭 译本 / 1984 院线版"></div>
+      <div><label>出版社/厂牌</label><input id="m-pub"></div>
+    </div>
+    <div class="row2">
+      <div><label>媒介</label><input id="m-medium" placeholder="纸质/电子书/影院/流媒体/CD"></div>
+      <div><label>版本年份</label><input id="m-vy" type="number"></div>
+    </div>
+    <button class="act" onclick="createWork()">创建作品与版本</button>
+  </div>
+  <div class="panel"><h3>③ 一次经历（重读请新建事件，不要覆盖旧记录）</h3>
+    <div class="row3">
+      <div><label>作品 ID</label><input id="e-wid" type="number"></div>
+      <div><label>版本 ID（可空）</label><input id="e-vid" type="number"></div>
+      <div><label>经历类型</label><select id="e-kind">
+        <option value="read">阅读</option><option value="watch">观看</option>
+        <option value="listen">聆听</option></select></div>
+    </div>
+    <div class="row3">
+      <div><label>日期</label><input id="e-date" type="date"></div>
+      <div><label>评分 1-5</label><input id="e-rating" type="number" min="1" max="5"></div>
+      <div><label>主题 ID（逗号分隔）</label><input id="e-topics"></div>
+    </div>
+    <label>个人收获</label><textarea id="e-gain"></textarea>
+    <label>来源链接（引用线索，抓取成功≠转载授权）</label><input id="e-url">
+    <button class="act" onclick="createEvent()">记录经历</button>
+  </div>`;
+}
+async function matchCheck(){
+  const d=await api('/api/admin/match-check',{method:'POST',body:JSON.stringify({
+    kind:$('m-k').value,title:$('m-title').value,creator:$('m-creator').value,
+    origin_year:+$('m-oy').value||null,external_ids:$('m-ids').value,
+    evidence_url:$('m-ev').value})});
+  if(d.error)return;
+  if(d.work_id){$('m-result').textContent='匹配到已有作品 #'+d.work_id
+    +(d.version_id?(' 与版本 #'+d.version_id):'（新译本请在“数据浏览”里加版本）');
+    $('e-wid').value=d.work_id;if(d.version_id)$('e-vid').value=d.version_id;}
+  else if(d.conflict){$('m-result').innerHTML='<span class="warn">已进入冲突审阅队列 #'
+    +d.conflict.id+'（标题相似但证据不足，请到“冲突审阅”处理）</span>';refreshCount();}
+  else $('m-result').textContent='没有匹配，将作为全新作品创建。';
+}
+async function createWork(){
+  const ids=($('m-ids').value.split(/[;；]/).map(s=>s.trim()).filter(Boolean)
+    .map(s=>{const [n,...v]=s.split(':');return [n.trim(),v.join(':').trim()];}));
+  const d=await api('/api/admin/works',{method:'POST',body:JSON.stringify({
+    kind:$('m-k').value,title:$('m-title').value,creator:$('m-creator').value,
+    origin_year:+$('m-oy').value||null,work_ids:ids,version_ids:ids,
+    version_label:$('m-vlabel').value,publisher:$('m-pub').value,
+    medium:$('m-medium').value,version_year:+$('m-vy').value||null})});
+  if(!d.error){alert('已创建作品 #'+d.id);$('e-wid').value=d.id;
+    if(d.versions&&d.versions[0])$('e-vid').value=d.versions[0].id;}
+}
+async function createEvent(){
+  const d=await api('/api/admin/events',{method:'POST',body:JSON.stringify({
+    work_id:+$('e-wid').value,version_id:+$('e-vid').value||null,
+    kind:$('e-kind').value,date:$('e-date').value,rating:+$('e-rating').value||null,
+    personal_gain:$('e-gain').value,source_url:$('e-url').value,
+    topic_ids:$('e-topics').value.split(',').map(x=>+x.trim()).filter(Boolean)})});
+  if(!d.error)alert('已记录经历 #'+d.event_id+'。重读会成为独立的新事件。');
+}
+
+/* ---------------- 笔记可见性 ---------------- */
+const VIS={private:['私密','v-private'],pending:['待公开','v-pending'],
+ published:['已发布','v-published'],archived:['已归档','v-archived']};
+async function tabNotes(){
+  const [notes,topics]=await Promise.all([api('/api/admin/notes'),
+    api('/api/admin/topics')]);
+  $('view').innerHTML=`<div class="panel"><h3>笔记可见性（列表 / 搜索 / 分享卡 / 导出共用同一规则）</h3>
+  <p class="muted">导入的摘录默认<b>私密</b>并带“导入”标记；站主不勾选发布，就不会出现在任何访客可见处。</p>
+  <div class="panel" style="margin:6px 0"><h3>写新笔记</h3>
+    <div class="row3"><div><label>作品 ID</label><input id="n-wid" type="number"></div>
+    <div><label>事件 ID（可空）</label><input id="n-eid" type="number"></div>
+    <div><label>可见性</label><select id="n-vis">
+      <option value="private">私密</option><option value="pending">待公开</option>
+      <option value="published">发布</option><option value="archived">归档</option>
+    </select></div></div>
+    <label>摘录（第三方内容，谨慎公开）</label><textarea id="n-ex"></textarea>
+    <label>摘录出处</label><input id="n-exf">
+    <label>我的感想</label><textarea id="n-body"></textarea>
+    <button class="act" onclick="createNote()">保存</button></div>
+  <table><tr><th>ID</th><th>作品</th><th>内容</th><th>可见性</th><th>导入</th><th>操作</th></tr>
+  ${notes.notes.map(n=>`<tr><td>${n.id}</td><td>#${n.work_id}</td>
+    <td>${esc((n.body||n.excerpt||'').slice(0,80))}</td>
+    <td><span class="tag ${VIS[n.visibility][1]}">${VIS[n.visibility][0]}</span></td>
+    <td>${n.from_import?'<span class="warn">是</span>':''}</td>
+    <td>${['private','pending','published','archived'].map(v=>
+      `<button class="ghost" onclick="setVis(${n.id},'${v}')">${VIS[v][0]}</button>`).join('')}
+      <a class="ghost" href="/share/${n.id}" target="_blank">卡</a></td></tr>`).join('')}
+  </table></div>`;
+}
+async function createNote(){
+  const d=await api('/api/admin/notes',{method:'POST',body:JSON.stringify({
+    work_id:+$('n-wid').value,event_id:+$('n-eid').value||null,
+    visibility:$('n-vis').value,excerpt:$('n-ex').value,
+    excerpt_from:$('n-exf').value,body:$('n-body').value})});
+  if(!d.error)tabNotes();
+}
+async function setVis(id,v){
+  const d=await api('/api/admin/notes/'+id,{method:'PATCH',
+    body:JSON.stringify({visibility:v})});
+  if(!d.error)tabNotes();
+}
+
+/* ---------------- 导入 ---------------- */
+async function tabImport(){
+  const b=await api('/api/admin/import-batches');
+  $('view').innerHTML=`<div class="panel"><h3>离线 CSV 导入</h3>
+  <p class="muted">同一文件（字节一致的 SHA-256）重传会被识别为幂等，不产生重复数据；修改后再传是新批次。
+     每一行原文逐字保留，可在批次中查看。</p>
+  <input type="file" id="csv" accept=".csv,text/csv">
+  <button class="act" onclick="doImport()">上传导入</button>
+  <p class="muted">列：title,kind,event_kind,event_date[,creator,origin_year,
+     external_ids,version_label,publisher,medium,version_year,source,source_url,
+     topics,rating,personal_gain,excerpt,excerpt_from,note,evidence_url]</p>
+  <div id="imp-res"></div></div>
+  <div class="panel"><h3>历史批次</h3><table>
+   <tr><th>ID</th><th>文件</th><th>行</th><th>成功</th><th>冲突</th><th>时间</th><th></th></tr>
+   ${b.batches.map(x=>`<tr><td>${x.id}</td><td>${esc(x.filename)}</td>
+    <td>${x.total_rows}</td><td>${x.ok_rows}</td><td>${x.conflict_rows}</td>
+    <td class="muted">${esc(x.imported_at)}</td>
+    <td><button class="ghost" onclick="showBatch(${x.id})">查看原始行</button></td></tr>`).join('')}
+  </table><div id="batch"></div></div>`;
+}
+async function doImport(){
+  const f=$('csv').files[0];if(!f){alert('请选择 CSV');return;}
+  const buf=await f.arrayBuffer();
+  const r=await fetch('/api/admin/import',{method:'POST',
+    headers:{'X-Admin-Token':TOKEN,'Content-Type':'text/csv',
+      'X-Import-Filename':encodeURIComponent(f.name)},body:buf});
+  const d=await r.json();
+  if(d.error){alert(d.error);return;}
+  $('imp-res').innerHTML=(d.idempotent?'<b>幂等：</b>该文件已导入过（批次 #'
+    +d.batch_id+'），未写入任何重复数据。':'导入完成：'
+    +`成功 ${d.ok_rows} / 冲突 ${d.conflict_rows} / 错误 ${d.error_rows||0}。`);
+  refreshCount();tabImport();
+}
+async function showBatch(id){
+  const d=await api('/api/admin/import-batches/'+id);
+  $('batch').innerHTML='<h4>批次 #'+id+' 原始行（逐字保留）</h4><table>'
+   +'<tr><th>行号</th><th>原始行</th><th>状态</th><th>作品/冲突</th><th>错误</th></tr>'
+   +d.rows.map(r=>`<tr><td>${r.line_no}</td><td class="raw">${esc(r.raw_line)}</td>
+     <td>${r.status}</td><td>${r.work_id?('作品#'+r.work_id):''}${r.conflict_id?(' 冲突#'+r.conflict_id):''}</td>
+     <td class="warn">${esc(r.error||'')}</td></tr>`).join('')+'</table>';
+}
+
+/* ---------------- 冲突审阅 ---------------- */
+async function tabConflicts(){
+  const d=await api('/api/admin/conflicts?status=open');
+  $('view').innerHTML=`<div class="panel"><h3>待审冲突（${d.conflicts.length}）</h3>
+  <p class="muted">流程：①看候选作品与原始行；②“保持独立”会新建作品；③“确认同一作品”必须选择目标并写理由/证据，操作进合并来历；
+     ④“取消”则丢弃该行（原文仍保留）。</p>
+  ${d.conflicts.map(c=>{const p=c.payload;
+   return `<div class="panel" style="background:#fffdf5"><b>#${c.id} ${
+     {title_only:'仅标题相似（禁止自动合并）',id_mismatch:'外部标识指向不一致',
+      changed_link:'来源链接变化'}[c.kind]||c.kind}</b>
+    <p>新条目：《${esc(p.title)}》 ${esc(p.creator||'')} ${p.origin_year||''}</p>
+    <p class="muted">标识：${(p.identifiers||[]).map(i=>esc(i.join(':'))).join('，')||'无'}
+       ${p.evidence_url?'· 证据 <a href="'+esc(p.evidence_url)+'" target="_blank">链接</a>':''}</p>
+    <p class="warn">${esc(p.note||'')}</p>
+    <table><tr><th>候选</th><th>标题</th><th>作者</th><th>标识</th><th>版本</th></tr>
+    ${(p.candidates||[]).map(x=>`<tr><td>#${x.work_id}</td><td>${esc(x.title)}</td>
+      <td>${esc(x.creator||'')}</td>
+      <td class="muted">${x.identifiers.map(i=>esc(i.namespace+':'+i.ext_id)).join('，')}</td>
+      <td>${x.versions.map(v=>esc(v.label||('版本#'+v.id))).join('；')}</td></tr>`).join('')}
+    </table>
+    <label>理由（必填，若选择合并）</label><input id="rs-${c.id}">
+    <button class="act" onclick="resolve(${c.id},'keep_separate')">保持独立（新建）</button>
+    <button class="ghost" onclick="mergeTarget(${c.id})">确认与候选同一作品…</button>
+    <button class="ghost danger" onclick="resolve(${c.id},'cancel')">取消该行</button>
+  </div>`;}).join('') || '<p class="muted">没有待审冲突。</p>'}</div>`;
+}
+async function resolve(id,action,target){
+  const d=await api('/api/admin/conflicts/'+id+'/resolve',{method:'POST',
+    body:JSON.stringify({action,target_work_id:target||null,
+      reason:$('rs-'+id)?.value||''})});
+  if(!d.error){tabConflicts();refreshCount();}
+}
+function mergeTarget(id){
+  const tid=prompt('输入确认同一作品的候选作品 ID（目标）：');
+  if(!tid)return;
+  if(!$('rs-'+id).value.trim()){alert('请先填写合并理由/证据说明');return;}
+  resolve(id,'merge',+tid);
+}
+async function refreshCount(){
+  try{const d=await api('/api/admin/conflicts?status=open');
+  $('cfc').innerHTML=d.conflicts.length?`<span class="badge-n">${d.conflicts.length}</span>`:'';
+  }catch(e){}
+}
+
+/* ---------------- 合并 / 拆分 ---------------- */
+async function tabMerge(){
+  const g=await api('/api/admin/merge-groups');
+  $('view').innerHTML=`<div class="panel"><h3>人工合并两个作品</h3>
+    <p class="muted">用于审阅后确认。不同译本/录音请在同一作品下“加版本”，而不是合并作品。</p>
+    <div class="row3"><div><label>保留的规范作品 ID</label><input id="mg-a" type="number"></div>
+    <div><label>被并入的作品 ID</label><input id="mg-b" type="number"></div></div>
+    <label>理由</label><input id="mg-r"><label>证据链接</label><input id="mg-e">
+    <button class="act" onclick="doMerge()">执行合并</button></div>
+    <div class="panel"><h3>合并组（可拆分，验收“错误合并后拆分”）</h3>
+    ${g.groups.length?'<table><tr><th>组</th><th>规范作品</th><th>被并成员</th><th>理由</th><th></th></tr>'
+      +g.groups.map(x=>`<tr><td>${x.id}</td><td>#${x.canonical_work_id}</td>
+      <td>${x.members.map(m=>esc(m.title_snapshot)+'(#'+m.duplicate_work_id+')').join('、')}</td>
+      <td>${esc(x.reason||'')}</td>
+      <td><button class="ghost danger" onclick="split(${x.id})">拆分</button></td></tr>`).join('')
+      +'</table>':'<p class="muted">暂无合并。</p>'}
+    <h4>拆分后重新归属</h4>
+    <div class="row3">
+      <div><label>版本 ID → 作品 ID</label><input id="ra-v" placeholder="12,9"></div>
+      <div><label>事件 ID → 作品 ID[,版本ID]</label><input id="ra-e" placeholder="30,9,5"></div>
+      <div><label>笔记 ID → 作品 ID</label><input id="ra-n" placeholder="7,9"></div>
+    </div>
+    <button class="ghost" onclick="reass('version')">移版本</button>
+    <button class="ghost" onclick="reass('event')">移事件</button>
+    <button class="ghost" onclick="reass('note')">移笔记</button></div>`;
+}
+async function doMerge(){
+  const d=await api('/api/admin/merge',{method:'POST',body:JSON.stringify({
+    canonical_id:+$('mg-a').value,duplicate_id:+$('mg-b').value,
+    reason:$('mg-r').value,evidence:$('mg-e').value})});
+  if(!d.error){alert('已合并');tabMerge();}
+}
+async function split(gid){
+  if(!confirm('拆分该合并组？被并作品将恢复独立。'))return;
+  const d=await api('/api/admin/merge-groups/'+gid+'/split',{method:'POST',
+    body:JSON.stringify({})});
+  if(!d.error){alert('已恢复作品：#'+d.restored_work_ids.join(', #')+'。请在下方重新归属版本/事件/笔记。');tabMerge();}
+}
+async function reass(kind){
+  const map={version:['ra-v','/api/admin/reassign/version',['version_id','to_work_id']],
+    event:['ra-e','/api/admin/reassign/event',['event_id','work_id','version_id']],
+    note:['ra-n','/api/admin/reassign/note',['note_id','work_id']]};
+  const [iid,url,keys]=map[kind];
+  const vals=$(iid).value.split(',').map(x=>+x.trim());
+  const body={};keys.forEach((k,i)=>body[k]=vals[i]||null);
+  const d=await api(url,{method:'POST',body:JSON.stringify(body)});
+  if(!d.error)alert('已重新归属');
+}
+
+/* ---------------- 主题 ---------------- */
+async function tabTopics(){
+  const d=await api('/api/admin/topics');
+  $('view').innerHTML=`<div class="panel"><h3>主题（重命名不改 slug，旧链接有效）</h3>
+  <div class="row2"><input id="t-name" placeholder="新主题名">
+   <button class="act" onclick="addTopic()">新建主题</button></div>
+  <table><tr><th>ID</th><th>名称</th><th>slug</th><th>事件数</th><th>重命名</th></tr>
+  ${d.topics.map(t=>`<tr><td>${t.id}</td><td>${esc(t.name)}</td><td class="muted">${esc(t.slug)}</td>
+   <td>${t.event_count}</td>
+   <td><input style="width:160px;display:inline-block" placeholder="新名字" id="tn-${t.id}">
+   <button class="ghost" onclick="renameTopic(${t.id})">重命名</button></td></tr>`).join('')}
+  </table></div>`;
+}
+async function addTopic(){
+  const d=await api('/api/admin/topics',{method:'POST',
+    body:JSON.stringify({name:$('t-name').value})});
+  if(!d.error)tabTopics();
+}
+async function renameTopic(id){
+  const v=$('tn-'+id).value.trim();if(!v)return;
+  const d=await api('/api/admin/topics/'+id+'/rename',{method:'POST',
+    body:JSON.stringify({name:v})});
+  if(!d.error)tabTopics();
+}
+
+/* ---------------- 来源 ---------------- */
+async function tabSources(){
+  const [s,c]=await Promise.all([api('/api/admin/sources'),
+    api('/api/admin/source-changes')]);
+  $('view').innerHTML=`<div class="panel"><h3>来源登记与链接变更</h3>
+  <div class="row3"><input id="s-name" placeholder="来源名">
+   <input id="s-url" placeholder="URL"><button class="act" onclick="addSource()">登记</button></div>
+  <table><tr><th>ID</th><th>名称</th><th>URL</th><th>变更</th></tr>
+  ${s.sources.map(x=>`<tr><td>${x.id}</td><td>${esc(x.name)}</td>
+   <td><a href="${esc(x.url||'#')}" target="_blank">${esc(x.url||'')}</a></td>
+   <td><input style="width:240px;display:inline-block" id="su-${x.id}" placeholder="新 URL">
+   <button class="ghost" onclick="changeUrl(${x.id})">变更</button></td></tr>`).join('')}
+  </table>
+  <h4>变更历史</h4><table><tr><th>来源</th><th>旧</th><th>新</th><th>原因</th><th>时间</th></tr>
+  ${c.changes.map(x=>`<tr><td>#${x.source_id}</td><td class="muted">${esc(x.old_url)}</td>
+   <td>${esc(x.new_url)}</td><td>${esc(x.reason)}</td><td class="muted">${esc(x.changed_at)}</td></tr>`).join('')}
+  </table></div>`;
+}
+async function addSource(){
+  const d=await api('/api/admin/sources',{method:'POST',body:JSON.stringify({
+    name:$('s-name').value,url:$('s-url').value,kind:'manual'})});
+  if(!d.error)tabSources();
+}
+async function changeUrl(id){
+  const reason=prompt('变更原因（记录到历史）：')||'';
+  const d=await api(`/api/admin/sources/${id}/url`,{method:'POST',
+    body:JSON.stringify({url:$('su-'+id).value,reason})});
+  if(!d.error)tabSources();
+}
+
+/* ---------------- 浏览 / 搜索 / 统计 ---------------- */
+async function tabBrowse(){
+  const st=await api('/api/admin/stats');
+  $('view').innerHTML=`<div class="panel"><h3>管理搜索（含私密/待公开，仅你可见）</h3>
+   <input id="bs" placeholder="输入关键词…"><button class="ghost" onclick="bSearch()">搜索</button>
+   <div id="bs-res"></div></div>
+   <div class="panel"><h3>统计口径</h3>
+   <p class="muted">事件：每次阅读/观看/聆听，重读另计；作品：去重后计数。</p>
+   <pre class="dump">${esc(JSON.stringify(st,null,2))}</pre></div>
+   <div class="panel"><h3>导出</h3>
+   <button class="ghost" onclick="doExport('json')">全量 JSON（含私密与原始行）</button>
+   <a class="ghost" href="/api/public/export?format=markdown" target="_blank">公开 Markdown</a>
+   <pre id="exp" class="dump" style="display:none"></pre></div>`;
+}
+async function bSearch(){
+  const d=await api('/api/admin/search?q='+encodeURIComponent($('bs').value));
+  $('bs-res').innerHTML='<table><tr><th>ID</th><th>作品</th><th>可见性</th><th>摘要</th></tr>'
+   +d.results.map(n=>`<tr><td>${n.id}</td><td>《${esc(n.title)}》</td>
+   <td><span class="tag ${VIS[n.visibility][1]}">${VIS[n.visibility][0]}</span></td>
+   <td>${esc((n.body||n.excerpt||'').slice(0,100))}</td></tr>`).join('')+'</table>';
+}
+async function doExport(){
+  const d=await api('/api/admin/export');
+  const el=document.getElementById('exp');
+  el.style.display='block';el.textContent=JSON.stringify(d,null,2);
+}
+refreshCount();
+</script></body></html>
