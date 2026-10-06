@@ -1,0 +1,11 @@
+{
+  "name": "growth-archive",
+  "version": "1.0.0",
+  "description": "成长站 · 阅读书影音档案：作品/版本/多次经历事件、外部标识匹配与冲突审阅、笔记三态可见规则",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/acceptance.js"
+  },
+  "engines": { "node": ">=18" }
+}

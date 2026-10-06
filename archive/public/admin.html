@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>档案管理端</title>
+<link rel="stylesheet" href="archive.css">
+</head>
+<body>
+<div class="container">
+  <div class="row" style="justify-content:space-between">
+    <h1>档案管理端</h1>
+    <div class="row">
+      <input id="token" placeholder="X-Admin-Token" size="16" value="dev-token">
+      <a href="index.html" class="muted">← 访客页</a>
+    </div>
+  </div>
+  <p class="sub">规则：外部标识优先匹配，标题同名不自动合并；导入笔记默认私密；摘录须显式勾选才会公开发布。</p>
+
+  <div class="tabs" id="tabs">
+    <button data-tab="entry" class="active">录入条目</button>
+    <button data-tab="notes">笔记审阅</button>
+    <button data-tab="conflicts">冲突队列</button>
+    <button data-tab="merge">合并/拆分</button>
+    <button data-tab="import">离线导入</button>
+    <button data-tab="taxonomy">主题/来源</button>
+  </div>
+
+  <!-- 录入 -->
+  <section id="tab-entry" class="glass">
+    <h3>① 作品</h3>
+    <div class="row">
+      <select id="w-type"><option value="book">书</option><option value="movie">影</option><option value="music">音</option></select>
+      <input id="w-title" placeholder="标题" size="18">
+      <input id="w-creators" placeholder="作者/导演/艺术家(分号)" size="24">
+      <input id="w-ids" placeholder='外部标识 JSON, 如 {"isbn13":"978.."}' size="28">
+      <button onclick="createWork()">新建作品</button>
+    </div>
+    <p class="muted" style="font-size:.8rem;margin-top:.4rem">同一本书不同译本、同名电影、不同录音版本请分别建作品或版本；系统只按外部标识自动匹配，同名仅入冲突队列。</p>
+
+    <h3 style="margin-top:1rem">② 版本 / 译本 / 录音版</h3>
+    <div class="row">
+      <select id="e-work"></select>
+      <input id="e-label" placeholder="如：朱生豪译本 / 1994现场录音" size="22">
+      <input id="e-publisher" placeholder="出版/发行方" size="16">
+      <input id="e-year" placeholder="年份" size="6">
+      <button onclick="addEdition()">加版本</button>
+    </div>
+
+    <h3 style="margin-top:1rem">③ 经历事件（重读请勾选）</h3>
+    <div class="row">
+      <select id="ev-work"></select>
+      <select id="ev-edition"><option value="">版本（可略）</option></select>
+      <input id="ev-date" type="date">
+      <label style="margin:0"><input type="checkbox" id="ev-revisit"> 重读/重看/重听</label>
+      <input id="ev-rating" placeholder="评分" size="5">
+      <button onclick="addEvent()">记一次经历</button>
+    </div>
+    <textarea id="ev-takeaway" placeholder="这次的个人收获…" style="margin-top:.5rem"></textarea>
+
+    <h3 style="margin-top:1rem">④ 个人笔记（新建默认私密）</h3>
+    <div class="row">
+      <select id="n-work"></select>
+      <input id="n-title" placeholder="笔记标题" size="18">
+      <button onclick="createNote()">新建私密笔记</button>
+    </div>
+    <textarea id="n-body" placeholder="笔记正文…" style="margin-top:.5rem"></textarea>
+  </section>
+
+  <!-- 笔记审阅 -->
+  <section id="tab-notes" class="glass" hidden>
+    <h3>笔记列表与发布流程：私密 → 待公开 → 发布版本</h3>
+    <p class="muted" style="font-size:.85rem">搜索摘要、分享卡、导出只认「发布版本」。发布时勾选的摘录才会公开；第三方抓取内容不自动进入发布版。</p>
+    <table><thead><tr><th>笔记</th><th>状态</th><th>操作</th><th>摘录(发布勾选)</th></tr></thead><tbody id="notes-body"></tbody></table>
+  </section>
+
+  <!-- 冲突 -->
+  <section id="tab-conflicts" class="glass" hidden>
+    <h3>冲突审阅</h3>
+    <div id="conflicts"></div>
+  </section>
+
+  <!-- 合并/拆分 -->
+  <section id="tab-merge" class="glass" hidden>
+    <h3>人工合并</h3>
+    <div class="row">
+      <select id="m-correct"></select><span>保留</span>
+      <select id="m-wrong"></select><span>并入</span>
+      <input id="m-evidence" placeholder='证据 JSON, 如 {"isbn13":"978.."} 或 {"manual":true}' size="30">
+      <input id="m-reason" placeholder="理由" size="16">
+      <button onclick="merge()">合并</button>
+    </div>
+    <h3 style="margin-top:1rem">合并来历与错误拆分</h3>
+    <div class="row">
+      <select id="p-work"></select>
+      <button class="ghost" onclick="provenance()">查看来历</button>
+    </div>
+    <div id="prov"></div>
+  </section>
+
+  <!-- 导入 -->
+  <section id="tab-import" class="glass" hidden>
+    <h3>离线 CSV 导入（可断网重传）</h3>
+    <p class="muted" style="font-size:.85rem">
+      列：type,title,creators,date,revisit,isbn13/imdb/upc…,editionLabel,translator,publisher,themes,takeaway,note,excerpt,sourceUrl,sourceLabel。
+      同 设备+批次+行 重传自动跳过；原始行全部留档。<a href="sample-import.csv">下载样例 CSV</a>
+    </p>
+    <div class="row">
+      <input id="imp-client" value="laptop-01" size="10">
+      <input id="imp-batch" value="batch-2026q1" size="14">
+      <input id="imp-source" placeholder="来源 URL（仅引用线索）" size="28">
+      <input type="file" id="imp-file" accept=".csv">
+      <button onclick="doImport()">上传/重传</button>
+    </div>
+    <pre id="imp-result" class="meta"></pre>
+    <h3 style="margin-top:.5rem">导入批次</h3>
+    <div id="imp-batches" class="meta"></div>
+  </section>
+
+  <!-- 主题/来源 -->
+  <section id="tab-taxonomy" class="glass" hidden>
+    <h3>主题（重命名后旧名仍可检索）</h3>
+    <div id="themes"></div>
+    <h3 style="margin-top:1rem">来源链接（变更保留历史）</h3>
+    <div id="sources"></div>
+  </section>
+</div>
+<div class="toast" id="toast" style="display:none"></div>
+<div id="dlg"></div>
+<script src="admin.js"></script>
+</body>
+</html>

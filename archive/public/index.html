@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>阅读书影音档案 · 成长站</title>
+<link rel="stylesheet" href="archive.css">
+</head>
+<body>
+<div class="container">
+  <h1>阅读 · 书影音档案</h1>
+  <p class="sub">按年份与主题浏览；年度统计可切换「按作品 / 按事件」口径，重读是一次新的经历。</p>
+
+  <div class="bar">
+    <input id="q" placeholder="搜索标题 / 作者 / 已发布笔记…" size="22">
+    <select id="year"><option value="">全部年份</option></select>
+    <select id="theme"><option value="">全部主题</option></select>
+    <select id="type">
+      <option value="">书/影/音全部</option>
+      <option value="book">书</option>
+      <option value="movie">影</option>
+      <option value="music">音</option>
+    </select>
+    <select id="scope">
+      <option value="work">统计口径：按作品</option>
+      <option value="event">统计口径：按事件</option>
+    </select>
+    <button id="go">查询</button>
+    <a href="/api/public/export.csv" class="muted" style="margin-left:auto">导出 CSV</a>
+    <a href="admin.html" class="muted">管理端</a>
+  </div>
+
+  <div class="glass stats" id="stats"></div>
+  <div class="grid" id="grid" style="margin-top:1rem"></div>
+  <div class="pager">
+    <span class="muted" id="total"></span>
+    <button id="more" class="ghost">下一页（游标分页）→</button>
+  </div>
+</div>
+<div class="toast" id="toast" style="display:none"></div>
+<script src="visitor.js"></script>
+</body>
+</html>
